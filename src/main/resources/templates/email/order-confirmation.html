@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="it">
+<head>
+  <meta charset="UTF-8"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #f5f5f7; color: #1d1d1f; }
+    .wrapper { max-width: 600px; margin: 0 auto; background: #fff; }
+    .header {
+      background: #0a0a0f;
+      padding: 40px 48px;
+      text-align: center;
+    }
+    .logo { font-size: 28px; font-weight: 900; color: #00e5ff; letter-spacing: 4px; }
+    .logo span { color: #ff4d6d; }
+    .header-sub { color: #6b6b80; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; margin-top: 8px; }
+    .hero { background: #0a0a0f; padding: 0 48px 48px; text-align: center; border-bottom: 2px solid #00e5ff; }
+    .checkmark { font-size: 64px; }
+    .hero h1 { color: #fff; font-size: 26px; margin: 16px 0 8px; letter-spacing: 1px; }
+    .hero p { color: #6b6b80; font-size: 14px; line-height: 1.6; }
+    .order-number {
+      display: inline-block;
+      background: #00e5ff;
+      color: #0a0a0f;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 3px;
+      padding: 8px 20px;
+      margin-top: 16px;
+      border-radius: 2px;
+    }
+    .section { padding: 36px 48px; }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #6b6b80;
+      margin-bottom: 20px;
+      border-bottom: 1px solid #e5e5ea;
+      padding-bottom: 12px;
+    }
+    .item {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid #f2f2f2;
+      align-items: center;
+    }
+    .item-thumb {
+      width: 80px; height: 60px;
+      object-fit: cover;
+      border-radius: 4px;
+      background: #e5e5ea;
+      flex-shrink: 0;
+    }
+    .item-info { flex: 1; }
+    .item-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .item-specs { font-size: 12px; color: #6b6b80; line-height: 1.7; }
+    .item-price { font-size: 16px; font-weight: 700; color: #0a0a0f; white-space: nowrap; }
+    .totals { background: #f5f5f7; border-radius: 8px; padding: 20px; margin-top: 8px; }
+    .total-row { display: flex; justify-content: space-between; font-size: 14px; padding: 5px 0; }
+    .total-row.main { font-size: 18px; font-weight: 700; border-top: 1px solid #d1d1d6; margin-top: 8px; padding-top: 12px; }
+    .shipping-info { background: #f0f9ff; border-left: 3px solid #00e5ff; padding: 16px 20px; border-radius: 0 8px 8px 0; }
+    .shipping-info p { font-size: 13px; line-height: 1.7; color: #333; }
+    .shipping-info strong { color: #0a0a0f; }
+    .address-block { background: #f5f5f7; padding: 16px 20px; border-radius: 8px; font-size: 14px; line-height: 2; }
+    .cta-block { text-align: center; padding: 36px 48px; background: #0a0a0f; }
+    .cta-block p { color: #6b6b80; font-size: 13px; margin-bottom: 20px; }
+    .btn {
+      display: inline-block;
+      background: #a8ff3e;
+      color: #0a0a0f;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 14px 36px;
+      text-decoration: none;
+      border-radius: 2px;
+    }
+    .footer { background: #0a0a0f; padding: 24px 48px; text-align: center; border-top: 1px solid #1e1e2e; }
+    .footer p { color: #3a3a4a; font-size: 11px; line-height: 1.8; }
+    .footer a { color: #00e5ff; text-decoration: none; }
+  </style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo">DEV<span>&amp;</span>FLY</div>
+    <div class="header-sub">PhotoStore</div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="checkmark">✅</div>
+    <h1>Ordine Confermato!</h1>
+    <p th:text="|Ciao ${customerName}, il tuo pagamento è andato a buon fine.|"></p>
+    <p>Le tue stampe sono ora in elaborazione.</p>
+    <div class="order-number" th:text="${order.orderNumber}"></div>
+  </div>
+
+  <!-- ARTICOLI -->
+  <div class="section">
+    <div class="section-title">Articoli ordinati</div>
+    <div th:each="item : ${order.items}">
+      <div class="item">
+        <img class="item-thumb"
+             th:src="${item.previewUrl}"
+             th:alt="${item.photoTitle}"
+             onerror="this.style.display='none'"/>
+        <div class="item-info">
+          <div class="item-title" th:text="${item.photoTitle}"></div>
+          <div class="item-specs">
+            <span th:text="|Formato: ${item.printFormat.displaySize}|"></span><br/>
+            <span th:text="|Carta: ${item.paperType.displayName} — ${item.paperType.description}|"></span><br/>
+            <span th:text="|Quantità: ${item.quantity}|"></span>
+          </div>
+        </div>
+        <div class="item-price" th:text="|€ ${#numbers.formatDecimal(item.lineTotal, 1, 2)}|"></div>
+      </div>
+    </div>
+
+    <!-- TOTALI -->
+    <div class="totals">
+      <div class="total-row">
+        <span>Subtotale</span>
+        <span th:text="|€ ${#numbers.formatDecimal(order.subtotal, 1, 2)}|"></span>
+      </div>
+      <div class="total-row">
+        <span>Spedizione</span>
+        <span th:text="${order.shippingCost.compareTo(T(java.math.BigDecimal).ZERO) == 0} ? 'Gratuita 🎉' : |€ ${#numbers.formatDecimal(order.shippingCost, 1, 2)}|"></span>
+      </div>
+      <div class="total-row main">
+        <span>Totale pagato</span>
+        <span th:text="|€ ${#numbers.formatDecimal(order.totalAmount, 1, 2)}|"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- INDIRIZZO SPEDIZIONE -->
+  <div class="section" style="padding-top:0;">
+    <div class="section-title">Indirizzo di spedizione</div>
+    <div class="address-block">
+      <strong th:text="${order.customerName}"></strong><br/>
+      <span th:text="${order.shippingAddress}"></span><br/>
+      <span th:text="|${order.shippingZip} ${order.shippingCity} (${order.shippingCountry})|"></span>
+    </div>
+  </div>
+
+  <!-- INFO STAMPA -->
+  <div class="section" style="padding-top:0;">
+    <div class="shipping-info">
+      <p>
+        <strong>⏱ Tempi di consegna stimati:</strong> 5–7 giorni lavorativi.<br/>
+        Le tue stampe vengono realizzate su ordinazione con le massime attenzioni qualitative.<br/>
+        Riceverai un'email con il tracking appena il pacco viene affidato al corriere.
+      </p>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="cta-block">
+    <p>Vuoi esplorare altre fotografie nel catalogo?</p>
+    <a href="http://localhost:3000/shop" class="btn">Esplora il Catalogo →</a>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <p>
+      DEV&amp;FLY PhotoStore — <a href="mailto:hello@devfly.it">hello@devfly.it</a><br/>
+      © 2025 DEV&amp;FLY. Tutti i diritti riservati.<br/>
+      Hai domande? Rispondi a questa email o contattaci su <a href="#">WhatsApp</a>.
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
+

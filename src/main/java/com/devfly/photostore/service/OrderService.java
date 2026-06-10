@@ -1,0 +1,291 @@
+package com.devfly.photostore.service;
+
+import com.devfly.photostore.dto.OrderDto;
+import com.devfly.photostore.entity.*;
+import com.devfly.photostore.exception.ResourceNotFoundException;
+import com.devfly.photostore.repository.OrderRepository;
+import com.devfly.photostore.repository.PhotoRepository;
+import com.stripe.Stripe;
+import com.stripe.exception.StripeException;
+import com.stripe.model.checkout.Session;
+import com.stripe.param.checkout.SessionCreateParams;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class OrderService {
+
+    private final OrderRepository orderRepository;
+    private final PhotoRepository photoRepository;
+    private final PricingService pricingService;
+    private final EmailService emailService;
+
+    @Value("${stripe.api.key}")
+    private String stripeApiKey;
+
+    @Value("${app.frontend-url}")
+    private String frontendUrl;
+
+    @PostConstruct
+    public void initStripe() {
+        Stripe.apiKey = stripeApiKey;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // CREA ORDINE + SESSIONE STRIPE CHECKOUT
+    // ─────────────────────────────────────────────────────────────────
+    @Transactional
+    public OrderDto.CheckoutResponse createOrderAndCheckout(OrderDto.CreateRequest req) {
+
+        // 1. Costruisci l'ordine
+        Order order = Order.builder()
+                .customerEmail(req.getCustomerEmail())
+                .customerName(req.getCustomerName())
+                .customerPhone(req.getCustomerPhone())
+                .shippingAddress(req.getShippingAddress())
+                .shippingCity(req.getShippingCity())
+                .shippingZip(req.getShippingZip())
+                .shippingCountry(req.getShippingCountry())
+                .notes(req.getNotes())
+                .status(OrderStatus.PENDING_PAYMENT)
+                .build();
+
+        // 2. Costruisci le righe e calcola i totali
+        List<OrderItem> items = new ArrayList<>();
+        BigDecimal subtotal = BigDecimal.ZERO;
+        int totalItems = 0;
+
+        for (OrderDto.ItemRequest itemReq : req.getItems()) {
+            Photo photo = photoRepository.findById(itemReq.getPhotoId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Foto non trovata con id: " + itemReq.getPhotoId()));
+
+            BigDecimal unitPrice = pricingService.calculatePrintPrice(
+                    photo.getBasePrice(),
+                    itemReq.getPrintFormat(),
+                    itemReq.getPaperType()
+            );
+            BigDecimal lineTotal = unitPrice.multiply(
+                    BigDecimal.valueOf(itemReq.getQuantity())
+            );
+
+            OrderItem item = OrderItem.builder()
+                    .order(order)
+                    .photo(photo)
+                    .photoTitle(photo.getTitle())
+                    .printFormat(itemReq.getPrintFormat())
+                    .paperType(itemReq.getPaperType())
+                    .quantity(itemReq.getQuantity())
+                    .unitPrice(unitPrice)
+                    .lineTotal(lineTotal)
+                    .previewUrl(photo.getPreviewUrl())
+                    .build();
+
+            items.add(item);
+            subtotal = subtotal.add(lineTotal);
+            totalItems += itemReq.getQuantity();
+        }
+
+        order.setItems(items);
+        order.setSubtotal(subtotal);
+
+        BigDecimal shippingCost = pricingService.calculateShipping(subtotal, totalItems);
+        order.setShippingCost(shippingCost);
+        order.setTotalAmount(subtotal.add(shippingCost));
+
+        // 3. Salva ordine (genera orderNumber via @PrePersist)
+        Order savedOrder = orderRepository.save(order);
+
+        // 4. Crea sessione Stripe Checkout
+        try {
+            Session session = createStripeSession(savedOrder);
+            savedOrder.setStripeSessionId(session.getId());
+            orderRepository.save(savedOrder);
+
+            log.info("Ordine {} creato, sessione Stripe: {}", savedOrder.getOrderNumber(), session.getId());
+
+            return OrderDto.CheckoutResponse.builder()
+                    .orderNumber(savedOrder.getOrderNumber())
+                    .checkoutUrl(session.getUrl())
+                    .totalAmount(savedOrder.getTotalAmount())
+                    .build();
+
+        } catch (StripeException e) {
+            log.error("Errore Stripe per ordine {}: {}", savedOrder.getOrderNumber(), e.getMessage());
+            throw new RuntimeException("Impossibile avviare il pagamento. Riprova tra poco.");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // COSTRUISCE SESSIONE STRIPE
+    // ─────────────────────────────────────────────────────────────────
+    private Session createStripeSession(Order order) throws StripeException {
+
+        List<SessionCreateParams.LineItem> lineItems = new ArrayList<>();
+
+        for (OrderItem item : order.getItems()) {
+            String description = String.format("Stampa %s — %s | %s",
+                    item.getPrintFormat().getDisplaySize(),
+                    item.getPaperType().getDisplayName(),
+                    item.getPaperType().getDescription()
+            );
+
+            lineItems.add(SessionCreateParams.LineItem.builder()
+                    .setQuantity((long) item.getQuantity())
+                    .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
+                            .setCurrency("eur")
+                            .setUnitAmount(item.getUnitPrice()
+                                    .multiply(BigDecimal.valueOf(100))
+                                    .setScale(0, RoundingMode.HALF_UP)
+                                    .longValue())
+                            .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
+                                    .setName(item.getPhotoTitle())
+                                    .setDescription(description)
+                                    .addImage(item.getPreviewUrl())
+                                    .build())
+                            .build())
+                    .build());
+        }
+
+        // Aggiungi spedizione se > 0
+        if (order.getShippingCost().compareTo(BigDecimal.ZERO) > 0) {
+            lineItems.add(SessionCreateParams.LineItem.builder()
+                    .setQuantity(1L)
+                    .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
+                            .setCurrency("eur")
+                            .setUnitAmount(order.getShippingCost()
+                                    .multiply(BigDecimal.valueOf(100))
+                                    .setScale(0, RoundingMode.HALF_UP)
+                                    .longValue())
+                            .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
+                                    .setName("Spedizione")
+                                    .setDescription("Consegna in 5-7 giorni lavorativi")
+                                    .build())
+                            .build())
+                    .build());
+        }
+
+        return Session.create(SessionCreateParams.builder()
+                .setMode(SessionCreateParams.Mode.PAYMENT)
+                .addAllLineItem(lineItems)
+                .setCustomerEmail(order.getCustomerEmail())
+                .putMetadata("order_number", order.getOrderNumber())
+                .setSuccessUrl(frontendUrl + "/checkout/success?order=" + order.getOrderNumber())
+                .setCancelUrl(frontendUrl + "/checkout/cancel?order=" + order.getOrderNumber())
+                .build());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // WEBHOOK: PAGAMENTO CONFERMATO
+    // ─────────────────────────────────────────────────────────────────
+    @Transactional
+    public void handlePaymentSuccess(String sessionId) {
+        Order order = orderRepository.findByStripeSessionId(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Ordine non trovato per sessione: " + sessionId));
+
+        if (order.getStatus() == OrderStatus.PENDING_PAYMENT) {
+            order.setStatus(OrderStatus.PAID);
+            order.setPaidAt(java.time.LocalDateTime.now());
+            orderRepository.save(order);
+
+            // Incrementa contatori nelle foto
+            order.getItems().forEach(item ->
+                photoRepository.findById(item.getPhoto().getId()).ifPresent(p -> {
+                    p.setOrderCount(p.getOrderCount() + item.getQuantity());
+                    photoRepository.save(p);
+                })
+            );
+
+            // Invia email di conferma al cliente (asincrono)
+            emailService.sendOrderConfirmation(order);
+
+            log.info("Ordine {} pagato con successo.", order.getOrderNumber());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // AGGIORNA STATO (Admin)
+    // ─────────────────────────────────────────────────────────────────
+    @Transactional
+    public OrderDto.Response updateStatus(String orderNumber, OrderStatus newStatus) {
+        Order order = orderRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Ordine non trovato: " + orderNumber));
+        order.setStatus(newStatus);
+
+        // Notifica email per spedizione
+        if (newStatus == OrderStatus.SHIPPED) {
+            emailService.sendShippingNotification(order);
+        }
+
+        return toResponse(orderRepository.save(order));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // QUERY
+    // ─────────────────────────────────────────────────────────────────
+    public OrderDto.Response getByOrderNumber(String orderNumber) {
+        return toResponse(orderRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Ordine non trovato: " + orderNumber)));
+    }
+
+    public Page<OrderDto.Response> getOrdersByEmail(String email, Pageable pageable) {
+        return orderRepository.findByCustomerEmailOrderByCreatedAtDesc(email, pageable)
+                .map(this::toResponse);
+    }
+
+    public Page<OrderDto.Response> getAllOrders(Pageable pageable) {
+        return orderRepository.findAll(pageable).map(this::toResponse);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // MAPPING
+    // ─────────────────────────────────────────────────────────────────
+    private OrderDto.Response toResponse(Order o) {
+        List<OrderDto.ItemResponse> itemResponses = o.getItems().stream()
+                .map(i -> OrderDto.ItemResponse.builder()
+                        .photoId(i.getPhoto().getId())
+                        .photoTitle(i.getPhotoTitle())
+                        .previewUrl(i.getPreviewUrl())
+                        .printFormat(i.getPrintFormat().getCode())
+                        .formatSize(i.getPrintFormat().getDisplaySize())
+                        .paperType(i.getPaperType().getDisplayName())
+                        .quantity(i.getQuantity())
+                        .unitPrice(i.getUnitPrice())
+                        .lineTotal(i.getLineTotal())
+                        .build())
+                .toList();
+
+        return OrderDto.Response.builder()
+                .id(o.getId())
+                .orderNumber(o.getOrderNumber())
+                .customerEmail(o.getCustomerEmail())
+                .customerName(o.getCustomerName())
+                .shippingAddress(o.getShippingAddress())
+                .shippingCity(o.getShippingCity())
+                .shippingZip(o.getShippingZip())
+                .shippingCountry(o.getShippingCountry())
+                .items(itemResponses)
+                .subtotal(o.getSubtotal())
+                .shippingCost(o.getShippingCost())
+                .totalAmount(o.getTotalAmount())
+                .status(o.getStatus())
+                .createdAt(o.getCreatedAt())
+                .paidAt(o.getPaidAt())
+                .build();
+    }
+}
+
