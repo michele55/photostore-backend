@@ -45,4 +45,3 @@ public class PhotoDto {
         private BigDecimal finalPrice;
     }
 }
-
