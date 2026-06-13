@@ -15,6 +15,7 @@
         <java.version>17</java.version>
         <jjwt.version>0.11.5</jjwt.version>
         <stripe.version>24.3.0</stripe.version>
+        <start-class>com.devfly.photostore.PhotoStoreApplication</start-class>
     </properties>
     <dependencies>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
@@ -38,6 +39,9 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.devfly.photostore.PhotoStoreApplication</mainClass>
+                </configuration>
             </plugin>
         </plugins>
     </build>
