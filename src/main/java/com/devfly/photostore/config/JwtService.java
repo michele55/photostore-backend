@@ -4,22 +4,16 @@ import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 
-/**
- * Servizio per generazione e validazione token JWT.
- * Esposto come @Component pubblico per essere iniettato in AuthService.
- */
 @Component
 public class JwtService {
-
-    @Value("${app.jwt.secret}")
+    @Value("${JWT_SECRET:devfly-super-secret-key-change-in-production-2024}")
     private String secret;
 
-    @Value("${app.jwt.expiration}")
+    @Value("${JWT_EXPIRATION:86400000}")
     private long expiration;
 
     private Key getKey() {
@@ -48,4 +42,3 @@ public class JwtService {
         return validateToken(token).getSubject();
     }
 }
-
